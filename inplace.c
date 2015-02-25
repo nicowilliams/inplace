@@ -22,18 +22,19 @@ static
 void
 usage(const char *progname, int code)
 {
-    printf("Usage:\t%1$s [options] FILE [COMMAND [ARGUMENTS]]\n"
-           "\t%1$s -h\n"
-           "\t%1$s --help\n\n"
+    printf("Usage:\t%1$s [options] FILE [COMMAND [ARGUMENTS]]\n\n"
            "\tThis program runs the COMMAND, if given, with stdin from FILE,\n"
            "\tand saves the output of COMMAND to FILE when the COMMAND\n"
-           "\tcompletes.  Any ARGUMENTS are passed to the COMMAND.\n"
-           "\tIf a COMMAND is not given then the stdin will be saved to FILE\n"
-           "\twhen end-of-file (EOF) is reached on stdin.\n\n"
+           "\tcompletes.  Any ARGUMENTS are passed to the COMMAND.\n\n"
+           "\tIf a COMMAND is not given then the stdin will be saved to FILE.\n\n"
            "\tOptions:\n"
-           "\t -bEXT, -b EXT, --backup EXT -> keep a backup named FILE.EXT\n"
-           "\t -w, --write -> re-write FILE to keep file identity the same,\n"
-           "\t                do not rename into place\n\n"
+           "\t -h\n"
+           "\t --help          -> this message;\n"
+           "\t -b SUFFIX,\n"
+           "\t --backup SUFFIX -> keep a backup named $FILE$SUFFIX;\n"
+           "\t -w,\n"
+           "\t --write         -> re-write FILE to keep file identity\n"
+           "\t                    the same, do not rename into place.\n\n"
            "\tBy default %1$s renames the new FILE into place; use the\n"
            "\t-w option to have %1$s rewrite the FILE..\n", progname);
     exit(code);
@@ -47,22 +48,13 @@ copy_file(int from_fd, int to_fd)
     ssize_t bytes, wbytes;
 
     while ((bytes = read(from_fd, buf, sizeof(buf))) != 0) {
-        if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            fprintf(stderr,
-                    "%s: Error: non-blocking stdin not supported\n", prog);
+        if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
             return 0;
-        }
-        if (bytes == -1 && errno != EINTR) {
-            fprintf(stderr,"%s: Error: %s while reading stdin\n", prog,
-                    strerror(errno));
+        if (bytes == -1 && errno != EINTR)
             return 0;
-        }
         while (bytes > 0 && (wbytes = write(to_fd, buf, bytes)) != bytes) {
-            if (wbytes == -1 && errno != EINTR) {
-                fprintf(stderr,"%s: Error: %s while writing\n", prog,
-                        strerror(errno));
+            if (wbytes == -1 && errno != EINTR)
                 return 0;
-            }
             bytes -= wbytes;
         }
     }
@@ -116,6 +108,40 @@ run_cmd(const char **what, int argc, char **argv)
     return status;
 }
 
+static
+int
+fix_it(const char *dst_fname, const char *src_fname, int rename_into_place)
+{
+    if (src_fname == NULL)
+        return 1;
+
+    if (rename_into_place) {
+        if (rename(src_fname, dst_fname) == -1) {
+            fprintf(stderr,
+                    "%s: Error: could not restore file %s after "
+                    "failed stream edit: %s\n", prog, dst_fname, strerror(errno));
+            return 0;
+        }
+    } else {
+        int src, dst;
+
+        if ((src = open(src_fname, O_RDONLY)) == -1 ||
+            (dst = open(dst_fname, O_WRONLY | O_TRUNC)) == -1 ||
+            !copy_file(src, dst)) {
+            fprintf(stderr,
+                    "%s: Error: could not restore file %s after "
+                    "failed stream edit: %s\n", prog, dst_fname, strerror(errno));
+            if (src != -1)
+                (void) close(src);
+            if (dst != -1)
+                (void) close(dst);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -123,90 +149,145 @@ main(int argc, char **argv)
     const char *fname;
     const char *bkp = NULL;
     char *tmp_fname = NULL;
-    int fd = -1;
+    char *bkp_fname = NULL;
     int tmp_fd = -1;
+    int bkp_fd = -1;
     int rename_into_place = 1;
 
     assert(argc > 0);
     prog = argv[0];
 
-    /* No getopt; too simple */
+    /* This program is too simple for getopt and friends */
     for (argc--, argv++; argc && argv[0][0] == '-'; argc--, argv++) {
-        if (strcmp(argv[0], "--") == 0) {
-            argc--;
-            argv++;
-            break;
-        }
-        if (strncmp(argv[0], "-b", sizeof("-b") - 1) == 0) {
-            bkp = argv[0] + sizeof("-b") - 1;
-            if (bkp[0] == '\0') {
-                if (argv[1] == NULL)
-                    usage(prog, 1);
+        if (argv[0][1] == '-') {
+            if (strcmp(argv[0], "--help") == 0)
+                usage(prog, 0);
+            if (strcmp(argv[0], "--write") == 0) {
+                rename_into_place = 0;
+            } else if (strcmp(argv[0], "--backup") == 0) {
                 bkp = argv[1];
                 argc--;
                 argv++;
+            } else if (strcmp(argv[0], "--") == 0) {
+                argc--;
+                argv++;
+                break;
+            } else {
+                usage(prog, 1);
             }
-            continue;
+        } else {
+            char *p;
+            for (p = argv[0] + 1; *p != '\0'; p++) {
+                if (p[0] == 'h')
+                    usage(prog, 0);
+                if (p[0] == 'b') {
+                    bkp = argv[1];
+                    argc--;
+                    argv++;
+                } else if (p[0] == 'w') {
+                    rename_into_place = 0;
+                } else if (p[0] == 'h') {
+                    usage(prog, 0);
+                } else {
+                    usage(prog, 1);
+                }
+            }
         }
-        if (strcmp(argv[0], "-w") == 0 || strcmp(argv[0], "--write") == 0)
-            rename_into_place = 0;
-        if (strcmp(argv[0], "-h") == 0 || strcmp(argv[0], "--help") == 0)
-            usage(prog, 0);
     }
-
     if (argc < 1)
         usage(prog, 0);
 
     fname = argv[0];
-    if (bkp == NULL) {
-        what = "asprintf";
-        if (asprintf(&tmp_fname, "%s-XXXXXX", fname) == -1)
-            goto fail;
+    argc--;
+    argv++;
 
-        what = "mkstemp";
-        tmp_fd = mkstemp(tmp_fname);
-    } else {
-        what = "asprintf";
-        if (asprintf(&tmp_fname, "%s.%s", fname, bkp) == -1)
-            goto fail;
+    /* Prep temp file or bkp file */
+    what = "asprintf";
+    if (asprintf(&tmp_fname, "%s-XXXXXX", fname) == -1)
+        goto fail;
 
-        what = "open (bkp file)";
-        tmp_fd = open(tmp_fname, O_CREAT | O_EXCL | O_WRONLY, 0600);
-    }
-
+    what = "mkstemp";
+    tmp_fd = mkstemp(tmp_fname);
     if (tmp_fd == -1)
         goto fail;
+
+    if (bkp != NULL) {
+        /* Make backup */
+        what = "asprintf";
+        if (asprintf(&bkp_fname, "%s%s", fname, bkp) == -1)
+            goto fail;
+
+        if (rename_into_place) {
+            what = "link";
+            (void) unlink(bkp_fname);
+            if (link(fname, bkp_fname) == -1) {
+                if (errno == EEXIST) {
+                    fprintf(stderr, "%s: Error: racing with another %s to "
+                            "update %s? %s\n", prog, prog, fname,
+                            strerror(errno));
+                    exit(2);
+                }
+                goto fail;
+            }
+        } else {
+            int fd;
+
+            what = "open (bkp file)";
+            (void) unlink(bkp_fname);
+            bkp_fd = open(bkp_fname, O_CREAT | O_EXCL | O_WRONLY, 0600);
+            if (bkp_fd == -1) {
+                if (errno == EEXIST) {
+                    fprintf(stderr, "%s: Error: racing with another %s to "
+                            "update %s? %s\n", prog, prog, fname,
+                            strerror(errno));
+                    exit(2);
+                }
+                goto fail;
+            }
+
+            what = "open (target file)";
+            fd = open(fname, O_RDONLY);
+            if (fd == -1)
+                goto fail;
+
+            if (!copy_file(fd, bkp_fd) ||
+                close(bkp_fd) == -1) {
+                (void) close(fd);
+                fprintf(stderr, "%s: I/O error creating backup\n", prog);
+                exit(2);
+            }
+            (void) close(fd);
+        }
+    }
+
+    /* Redirect stdout to go to tmp file */
     what = "dup2";
     if (dup2(tmp_fd, STDOUT_FILENO) == -1)
         goto fail;
     (void) close(tmp_fd);
     tmp_fd = -1;
 
-    /* At this point stdout is set to write to tmp_fname */
-
-    argc--;
-    argv++;
-
     if (argc == 0) {
         /* stdin has the input we want; write it to stdout */
+        // XXX Better info in copy_file for error handling?
         if (!copy_file(STDIN_FILENO, STDOUT_FILENO)) {
+            fprintf(stderr, "%s: Error: I/O error copying stdin\n", prog);
             (void) unlink(tmp_fname);
+            (void) fix_it(fname, bkp_fname, rename_into_place);
             exit(2);
         }
     } else {
-        int status;
+        int fd, status;
 
         /* Redirect stdin to be from fname */
         what = "open";
         fd = open(fname, O_RDONLY);
         if (fd == -1)
             goto fail;
-
         what = "dup2";
         if (dup2(fd, STDIN_FILENO) == -1)
             goto fail;
         (void) close(fd);
-        fd = -1;
 
         status = run_cmd(&what, argc, argv);
 
@@ -215,42 +296,35 @@ main(int argc, char **argv)
 
         if (WIFSIGNALED(status)) {
             (void) unlink(tmp_fname);
+            (void) fix_it(fname, bkp_fname, rename_into_place);
             (void) kill(getpid(), WTERMSIG(status)); /* exit with same signal */
             /* NOTREACHED */
             exit(2);
         }
         if (!WIFEXITED(status)) {
             (void) unlink(tmp_fname);
+            (void) fix_it(fname, bkp_fname, rename_into_place);
             exit(2);
         }
 
         status = WEXITSTATUS(status);
         if (status != 0) {
             (void) unlink(tmp_fname);
+            (void) fix_it(fname, bkp_fname, rename_into_place);
             exit(status);
         }
     }
 
-    if (rename_into_place) {
-        what = "rename";
-        if (rename(tmp_fname, fname) == -1)
-            goto fail;
-        return 0;
-    }
-
-    what = "open (file)";
-    fd = open(fname, O_TRUNC | O_WRONLY, 0600);
-    if (fd == -1)
-        goto fail;
-    tmp_fd = open(tmp_fname, O_RDONLY);
-    what = "open (bkp file)";
-    if (tmp_fd == -1)
-        goto fail;
-    if (!copy_file(tmp_fd, fd)) {
-        fprintf(stderr, "%s: Error: Re-write failed, %s is truncated!\n",
-                prog, fname);
+    /* Rename or write into place */
+    if (!fix_it(fname, tmp_fname, rename_into_place)) {
+        (void) fix_it(fname, bkp_fname, rename_into_place);
         exit(2);
     }
+
+    if (!rename_into_place)
+        (void) unlink(tmp_fname);
+
+    /* Leave backup file around */
 
     return 0;
 

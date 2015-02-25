@@ -1,5 +1,5 @@
-inplace
-=======
+STREAM EDITOR ADAPTOR: EDIT FILES IN-PLACE
+==========================================
 
 A command-line tool for in-place stream editing of files with stream
 editors that don't know how to do that themselves.
@@ -19,19 +19,21 @@ used, then the file will be re-written and will keep its identity.
 
     $ inplace
     Usage:  ./inplace [options] FILE [COMMAND [ARGUMENTS]]
-            ./inplace -h
-            ./inplace --help
 
             This program runs the COMMAND, if given, with stdin from FILE,
             and saves the output of COMMAND to FILE when the COMMAND
             completes.  Any ARGUMENTS are passed to the COMMAND.
-            If a COMMAND is not given then the stdin will be saved to FILE
-            when end-of-file (EOF) is reached on stdin.
+
+            If a COMMAND is not given then the stdin will be saved to FILE.
 
             Options:
-             -bEXT, -b EXT, --backup EXT -> keep a backup named FILE.EXT
-             -w, --write -> re-write FILE to keep file identity the same,
-                            do not rename into place
+             -h,
+             --help          -> this message
+             -b SUFFIX,
+             --backup SUFFIX -> keep a backup named $FILE$SUFFIX
+             -w,
+             --write         -> re-write FILE to keep file identity
+                                the same, do not rename into place
 
             By default ./inplace renames the new FILE into place; use the
             -w option to have ./inplace rewrite the FILE..
