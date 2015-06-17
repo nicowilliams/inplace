@@ -13,6 +13,10 @@ This is similar to the GNU sponge(1) command, which is used like this:
 The sponge usage is also supported:
 
     $ sed -e 's/foo/bar/g' | inplace somefile
+    
+inplace can also be used with xargs. The example here is looking for json files with a field called foo, and setting that field to an empty list.
+
+    $ find -name '*.json' | xargs grep '"foo":' | xargs -i@ -- inplace @ jq 'foo|=[]'
 
 The file edited in-place will be renamed into place unless the `-w` option is
 used, then the file will be re-written and will keep its identity.
